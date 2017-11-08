@@ -1,5 +1,6 @@
 #include "ros/ros.h"
 #include "sensor_msgs/LaserScan.h"
+#include "std_msgs/Int16.h"
 #include <tf/transform_listener.h>
 #include <tf/transform_broadcaster.h>
 #include <visualization_msgs/Marker.h>
@@ -27,6 +28,7 @@ int estado = 0;
 // Higher level
 void findCup(const sensor_msgs::LaserScan::ConstPtr& laser_msg);
 void laserCallback(const sensor_msgs::LaserScan::ConstPtr& laser_msg);
+void estadoCallback(const std_msgs::Int16::ConstPtr& msg);
 
 // ############################################################################
 // Auxiliary Functions
@@ -57,6 +59,7 @@ int main(int argc, char **argv)
     ros::Publisher marker_pub = n.advertise<visualization_msgs::Marker>("visualization_marker", 1);    
 	// Subscribers
 	ros::Subscriber sub_hokuyo = n.subscribe("laserScan", 1, laserCallback);
+	ros::Subscriber sub_estado = n.subscribe("estado", 1, estadoCallback);
     tf::TransformBroadcaster broadcaster;	
 	BroadPtr = &broadcaster;	
 	marker_pubPtr = &marker_pub;
@@ -68,10 +71,17 @@ int main(int argc, char **argv)
 
 // ############################################################################
 // Higher level
+void estadoCallback(const std_msgs::Int16::ConstPtr& msg)
+{
+	estado = msg->data;
+}
 
 void laserCallback(const sensor_msgs::LaserScan::ConstPtr& laser_msg)
 {
-	findCup(laser_msg);
+	if(estado == 3)
+	{
+		findCup(laser_msg);
+	}
 }
 
 void findCup(const sensor_msgs::LaserScan::ConstPtr& laser_msg)
