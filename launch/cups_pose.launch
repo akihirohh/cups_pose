@@ -1,0 +1,4 @@
+<launch>
+    <node name="cups_pose" pkg="cups_pose" type="cups_pose_node" respawn="false" output="screen"/>
+
+</launch>

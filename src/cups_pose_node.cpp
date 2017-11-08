@@ -21,6 +21,8 @@
 ros::Publisher *marker_pubPtr;
 tf::TransformBroadcaster* BroadPtr;
 
+int estado = 0;
+
 // ############################################################################
 // Higher level
 void findCup(const sensor_msgs::LaserScan::ConstPtr& laser_msg);
@@ -30,6 +32,7 @@ void laserCallback(const sensor_msgs::LaserScan::ConstPtr& laser_msg);
 // Auxiliary Functions
 void fcnConvertPolarCartesian(sensor_msgs::LaserScan laser_msg, std::vector<float> &x, std::vector<float> &y);
 float fcnCossineLaw(float a, float b, float angle);
+void fcnFilterInvalidValues(sensor_msgs::LaserScan &laser_msg);
 void fcnFindClusters(sensor_msgs::LaserScan laser_msg, std::vector<std::pair<int,int> > &clusters_index);
 void fcnFindFirstCupFromLeft(sensor_msgs::LaserScan laser_msg, int index_right_extremity_wall, float avg_orthogonal_distance_to_wall, float &x_cup, float &y_cup);
 void fcnFindIndexDoor(sensor_msgs::LaserScan laser_msg, int &index_right_extremity);
@@ -37,7 +40,7 @@ void fcnFindIndexWall(sensor_msgs::LaserScan laser_msg, int index_right_extremit
 void fcnGetCorrelationCoefficient(std::vector<float> x, std::vector<float> y, float &R, float &slope, float &intercept, float &line_length, float &std_dev);
 void fcnGetCorrelationCoefficientGivenX(std::vector<float> x, std::vector<float> y, float &R, float &slope, float &intercept, float &line_length, float &std_dev);
 float fcnMean(std::vector<float> x);
-void fcnMedianFilter(std::vector<float> &lidar );
+void fcnMedianFilter(sensor_msgs::LaserScan &laser_msg);
 void fcnSaveVector(std::string filename, std::vector<float> aux);
 float fcnStdDevDiff(std::vector<float> x1,std::vector<float> x2);
 float fcnSumSquareDiff(std::vector<float> x1, std::vector<float> x2);
@@ -62,6 +65,15 @@ int main(int argc, char **argv)
 	
 	return 0;
 }
+
+// ############################################################################
+// Higher level
+
+void laserCallback(const sensor_msgs::LaserScan::ConstPtr& laser_msg)
+{
+	findCup(laser_msg);
+}
+
 void findCup(const sensor_msgs::LaserScan::ConstPtr& laser_msg)
 {
 	static int cnt = 0;
@@ -69,26 +81,11 @@ void findCup(const sensor_msgs::LaserScan::ConstPtr& laser_msg)
 	int index_right_extremity_door=0, index_right_extremity_wall=0, n_cluster = 0;
 	float R=0, intercept=0, slope=0, std_dev=0, line_length=0, avg_orthogonal_distance_to_wall=0, x_cup=0, y_cup=0;
 	sensor_msgs::LaserScan laser_msg_copy = *laser_msg;
-	std::vector<float> lidar, x, y; 
+	std::vector<float> x, y; 
 	std::vector<std::pair<int,int> > clusters_index;
-	lidar.clear();
-	// Transform NAN, INF and values out of range into zero
-    for(int i = 0; i < (laser_msg->angle_max-laser_msg->angle_min)/laser_msg->angle_increment-1; i++)
-	{
-		if(std::isfinite(laser_msg->ranges[i]) && laser_msg->ranges[i] < MAX_VALID_DISTANCE)
-		{
-			lidar.push_back(laser_msg->ranges[i]);
-		}
-		else
-		{
-			lidar.push_back(0);
-		}
-	}
-	fcnMedianFilter(lidar);
-	for (int i =0; i < lidar.size(); i++)
-	{
-		laser_msg_copy.ranges[i] = lidar[i];
-	}	
+
+	fcnFilterInvalidValues(laser_msg_copy);	
+	fcnMedianFilter(laser_msg_copy);
 	fcnFindClusters(laser_msg_copy, clusters_index);
 	fcnConvertPolarCartesian(laser_msg_copy, x, y);
 
@@ -105,7 +102,8 @@ void findCup(const sensor_msgs::LaserScan::ConstPtr& laser_msg)
 			valid_cluster = true;
 			fcnFindIndexDoor(laser_msg_copy, index_right_extremity_door);
 			fcnFindIndexWall(laser_msg_copy, index_right_extremity_door, index_right_extremity_wall, avg_orthogonal_distance_to_wall);
-			fcnFindFirstCupFromLeft(laser_msg_copy, index_right_extremity_wall, avg_orthogonal_distance_to_wall, x_cup, y_cup);	
+			fcnFindFirstCupFromLeft(laser_msg_copy, index_right_extremity_wall, avg_orthogonal_distance_to_wall, x_cup, y_cup);
+
 			visualization_msgs::Marker cup_marker;
 			
 			cup_marker.header.frame_id = laser_msg->header.frame_id;
@@ -148,15 +146,10 @@ void findCup(const sensor_msgs::LaserScan::ConstPtr& laser_msg)
 		}
 		else
 		{
-			n_cluster++;
 			// Continue while and try next cluster...
+			n_cluster++;
 		}
 	}	
-}
-
-void laserCallback(const sensor_msgs::LaserScan::ConstPtr& laser_msg)
-{
-	findCup(laser_msg);
 }
 
 // ######################################################
@@ -174,6 +167,17 @@ void fcnConvertPolarCartesian(sensor_msgs::LaserScan laser_msg, std::vector<floa
 float fcnCossineLaw(float a, float b, float angle)
 {
 	return sqrt(pow(a,2) + pow(b,2) - 2*a*b*cos(angle));
+}
+void fcnFilterInvalidValues(sensor_msgs::LaserScan &laser_msg)
+{
+	// Transform NAN, INF and values out of range into zero
+	for(int i = 0; i < (laser_msg.angle_max-laser_msg.angle_min)/laser_msg.angle_increment-1; i++)
+	{
+		if(!std::isfinite(laser_msg.ranges[i]) || laser_msg.ranges[i] > MAX_VALID_DISTANCE)
+		{
+			laser_msg.ranges[i] = 0;
+		}
+	}
 }
 void fcnFindClusters(sensor_msgs::LaserScan laser_msg, std::vector<std::pair<int,int> > &clusters_index)
 {
@@ -207,7 +211,6 @@ void fcnFindClusters(sensor_msgs::LaserScan laser_msg, std::vector<std::pair<int
         ROS_INFO_STREAM(i << ": " << clusters_index[i].first << " " << clusters_index[i].second << std::endl);
 	}*/
 }
-
 void fcnFindIndexDoor(sensor_msgs::LaserScan laser_msg, int &index_right_extremity)
 {
 	// Find the index of the right extremity of the door
@@ -239,8 +242,8 @@ void fcnFindIndexDoor(sensor_msgs::LaserScan laser_msg, int &index_right_extremi
 	{
 		index_right_extremity = max_deriv[1]; //Check if it's index_left_extremity...
 	}
+	ROS_INFO_STREAM("fcnFindIndexDoor...index_right_extremity_door: " << index_right_extremity);
 }
-
 void fcnFindIndexWall(sensor_msgs::LaserScan laser_msg, int index_right_extremity_door, int &index_right_extremity_wall, float &avg_orthogonal_distance_to_wall)
 {
 	// Find the index of the right extremity of the wall right after door
@@ -261,8 +264,8 @@ void fcnFindIndexWall(sensor_msgs::LaserScan laser_msg, int index_right_extremit
 	}
 	fcnConvertPolarCartesian(laser_msg, x, y);
 	avg_orthogonal_distance_to_wall = fcnMean(std::vector<float> (y.begin()+index_right_extremity_door, y.begin()+index_right_extremity_wall));
+	ROS_INFO_STREAM("fcnFindIndexWall... index_extremity_wall: " << index_right_extremity_wall << "\tavg_orthogonal_distance_to_wall: " << avg_orthogonal_distance_to_wall); 
 }
-
 void fcnFindFirstCupFromLeft(sensor_msgs::LaserScan laser_msg, int index_right_extremity_wall, float avg_orthogonal_distance_to_wall, float &x_cup, float &y_cup)
 {
 	//Find first cup starting from left. It may be possible to tune THRESHOLD_CUP_DISTANCE_DETECT to detect only the first row of of cups
@@ -301,8 +304,8 @@ void fcnFindFirstCupFromLeft(sensor_msgs::LaserScan laser_msg, int index_right_e
 		} 
 		i++;
 	}
+	ROS_INFO_STREAM("fcnFindCupFromLeft... x_cup: " << x_cup << "\ty_cup: " << y_cup);
 }
-
 void fcnGetCorrelationCoefficientGivenX(std::vector<float> x, std::vector<float> y, float &R, float &slope, float &intercept, float &line_length, float &std_dev)
 {
 	float Sxy = 0, Sx = 0, Sy = 0, Sxx = 0, Syy = 0, meanx = 0, meany = 0;
@@ -397,24 +400,19 @@ float fcnMean(std::vector<float> x)
 		}
 		return aux/n;
 }
-void fcnMedianFilter(std::vector<float> &lidar )
+void fcnMedianFilter(sensor_msgs::LaserScan &laser_msg)
 {
-	std::vector<float> lidar_copy = lidar;
+	sensor_msgs::LaserScan laser_copy = laser_msg;
 	std::vector<float> lidar_vec_cluster (3);	
 
-	lidar[0] = lidar_copy[0];
-	for (int i = 1; i < lidar_copy.size() - 1; i++)
+	for (int i = 1; i < (laser_msg.angle_max-laser_msg.angle_min)/laser_msg.angle_increment-1; i++)
 	{
-		lidar_vec_cluster[0] = lidar_copy[i-1];
-		lidar_vec_cluster[1] = lidar_copy[i];
-		lidar_vec_cluster[2] = lidar_copy[i+1];
+		lidar_vec_cluster[0] = laser_copy.ranges[i-1];
+		lidar_vec_cluster[1] = laser_copy.ranges[i];
+		lidar_vec_cluster[2] = laser_copy.ranges[i+1];
 		std::sort(lidar_vec_cluster.begin(), lidar_vec_cluster.end());
-		lidar[i] = lidar_vec_cluster[1];
+		laser_msg.ranges[i] = lidar_vec_cluster[1];
 	}
-	lidar.back() = lidar_copy.back();
-
-	//ROS_INFO_STREAM("fcnMedianFilter called!");
-	fcnSaveVector("lidar_median.txt", lidar);
 }
 void fcnSaveVector(std::string filename, std::vector<float> aux)
 {
@@ -443,6 +441,7 @@ float fcnStdDevDiff(std::vector<float> x1,std::vector<float> x2)
 }	
 float fcnSumSquareDiff(std::vector<float> x1, std::vector<float> x2)
 {
+	// Continue while and try next cluster...
 	float sum = 0;
 	for (int i = 0; i < x1.size(); i++)
 	{
